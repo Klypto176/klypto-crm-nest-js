@@ -1,1 +1,431 @@
+generator client {
+  provider = "prisma-client-js"
+}
 
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id                 String                 @id @default(cuid())
+  name               String
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+  address            String?
+  phoneNumber        String?
+  primaryEmail       String?
+  registrationNumber String?
+  taxId              String?
+  website            String?
+  assets             Asset[]
+  attendanceRecords  AttendanceRecord[]
+  branches           Branch[]
+  candidates         Candidate[]
+  departments        Department[]
+  employees          Employee[]
+  transactions       FinancialTransaction[]
+  grievances         Grievance[]
+  jobPostings        JobPosting[]
+  leads              Lead[]
+  leaveRequests      LeaveRequest[]
+  partners           Partner[]
+  payrollRecords     PayrollRecord[]
+  performanceReviews PerformanceReview[]
+  policies           Policy[]
+  projects           Project[]
+  projectTasks       ProjectTask[]
+  reimbursements     Reimbursement[]
+  resignations       Resignation[]
+  salaryStructures   SalaryStructure[]
+  users              User[]
+}
+
+model User {
+  id                      String        @id @default(cuid())
+  email                   String        @unique
+  passwordHash            String
+  hashedRefreshToken      String?
+  fullName                String
+  isActive                Boolean       @default(true)
+  organizationId          String
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+  employee                Employee?
+  assignedLeads           Lead[]        @relation("LeadAssignee")
+  createdProjects         Project[]     @relation("ProjectCreator")
+  managedProjects         Project[]     @relation("ProjectManager")
+  assignedTasks           ProjectTask[]
+  organization            Organization  @relation(fields: [organizationId], references: [id])
+  assignedRoleAssignments UserRole[]    @relation("RoleAssignedBy")
+  roleAssignments         UserRole[]    @relation("UserRoleAssignments")
+}
+
+model Role {
+  id               String     @id @default(cuid())
+  name             String     @unique
+  description      String?
+  isSystem         Boolean    @default(false)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  dashboardModules String[]   @default([])
+  assignments      UserRole[]
+}
+
+model UserRole {
+  id           String   @id @default(cuid())
+  userId       String
+  roleId       String
+  assignedById String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  assignedBy   User?    @relation("RoleAssignedBy", fields: [assignedById], references: [id])
+  role         Role     @relation(fields: [roleId], references: [id])
+  user         User     @relation("UserRoleAssignments", fields: [userId], references: [id])
+
+  @@unique([userId, roleId])
+}
+
+model Employee {
+  id                 String              @id @default(cuid())
+  name               String
+  code               String              @unique
+  role               String
+  department         String
+  status             String              @default("Active")
+  organizationId     String
+  userId             String?             @unique
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  branchId           String?
+  departmentId       String?
+  assignedAssets     Asset[]
+  attendanceRecords  AttendanceRecord[]
+  managedBranches    Branch[]            @relation("BranchHead")
+  managedDepartments Department[]        @relation("DeptHead")
+  branch             Branch?             @relation(fields: [branchId], references: [id])
+  dept               Department?         @relation(fields: [departmentId], references: [id])
+  organization       Organization        @relation(fields: [organizationId], references: [id])
+  user               User?               @relation(fields: [userId], references: [id])
+  grievances         Grievance[]
+  leaveRequests      LeaveRequest[]
+  payrollRecords     PayrollRecord[]
+  performanceReviews PerformanceReview[]
+  reimbursements     Reimbursement[]
+  resignation        Resignation?
+  salaryStructure    SalaryStructure?
+}
+
+model AttendanceRecord {
+  id             String       @id @default(cuid())
+  date           DateTime     @default(now()) @db.Date
+  checkIn        DateTime?
+  checkOut       DateTime?
+  status         String       @default("Present")
+  employeeId     String
+  organizationId String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  employee       Employee     @relation(fields: [employeeId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([employeeId, date])
+}
+
+model LeaveRequest {
+  id             String       @id @default(cuid())
+  type           String
+  startDate      DateTime
+  endDate        DateTime
+  status         String       @default("Pending")
+  reason         String?
+  employeeId     String
+  organizationId String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  employee       Employee     @relation(fields: [employeeId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+
+model SalaryStructure {
+  id             String       @id @default(cuid())
+  employeeId     String       @unique
+  basicSalary    Float        @default(0)
+  hra            Float        @default(0)
+  allowances     Float        @default(0)
+  deductions     Float        @default(0)
+  organizationId String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  employee       Employee     @relation(fields: [employeeId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+
+model PayrollRecord {
+  id             String       @id @default(cuid())
+  employeeId     String
+  month          Int
+  year           Int
+  netPay         Float
+  status         String       @default("Paid")
+  organizationId String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  employee       Employee     @relation(fields: [employeeId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([employeeId, month, year])
+}
+
+model PerformanceReview {
+  id             String       @id @default(cuid())
+  employeeId     String
+  cycle          String
+  rating         Float
+  feedback       String?
+  status         String       @default("Complete")
+  organizationId String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  employee       Employee     @relation(fields: [employeeId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+
+model Lead {
+  id             String       @id @default(cuid())
+  name           String
+  email          String?
+  phone          String?
+  company        String?
+  priority       String       @default("Medium")
+  status         String       @default("New")
+  value          Float?       @default(0)
+  organizationId String
+  assigneeId     String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  assignee       User?        @relation("LeadAssignee", fields: [assigneeId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  notes          LeadNote[]
+}
+
+model LeadNote {
+  id        String   @id @default(cuid())
+  content   String
+  leadId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+}
+
+model JobPosting {
+  id             String       @id @default(cuid())
+  title          String
+  department     String
+  status         String       @default("Active")
+  organizationId String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  ctcMax         Int
+  ctcMin         Int
+  description    String
+  jobType        String       @default("Full-time")
+  location       String
+  candidates     Candidate[]
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+
+model Candidate {
+  id             String       @id @default(cuid())
+  name           String
+  email          String?
+  phone          String?
+  role           String
+  stage          String       @default("Applied")
+  score          Int          @default(0)
+  jobId          String?
+  organizationId String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  job            JobPosting?  @relation(fields: [jobId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+
+model Grievance {
+  id             String       @id @default(cuid())
+  subject        String
+  category       String
+  description    String
+  severity       String       @default("Medium")
+  status         String       @default("Open")
+  isAnonymous    Boolean      @default(false)
+  employeeId     String?
+  organizationId String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  employee       Employee?    @relation(fields: [employeeId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+
+model Project {
+  id             String        @id @default(cuid())
+  name           String
+  description    String?
+  status         String        @default("Active")
+  organizationId String
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  createdById    String?
+  managerId      String?
+  createdBy      User?         @relation("ProjectCreator", fields: [createdById], references: [id])
+  manager        User?         @relation("ProjectManager", fields: [managerId], references: [id])
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  tasks          ProjectTask[]
+}
+
+model ProjectTask {
+  id             String       @id @default(cuid())
+  title          String
+  description    String?
+  priority       String       @default("Medium")
+  status         String       @default("todo")
+  dueDate        DateTime?
+  assigneeId     String?
+  projectId      String?
+  organizationId String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  assignee       User?        @relation(fields: [assigneeId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  project        Project?     @relation(fields: [projectId], references: [id])
+}
+
+model Asset {
+  id             String       @id @default(cuid())
+  name           String
+  category       String
+  location       String
+  value          Float        @default(0)
+  status         String       @default("In Storage")
+  employeeId     String?
+  organizationId String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  employee       Employee?    @relation(fields: [employeeId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+
+model Partner {
+  id             String                 @id @default(cuid())
+  name           String
+  type           String                 @default("CUSTOMER")
+  contactPerson  String
+  email          String
+  phone          String
+  status         String                 @default("Active")
+  category       String                 @default("General")
+  creditLimit    Float                  @default(0)
+  organizationId String
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  transactions   FinancialTransaction[]
+  organization   Organization           @relation(fields: [organizationId], references: [id])
+}
+
+model Policy {
+  id             String       @id @default(cuid())
+  title          String
+  content        String
+  category       String       @default("General")
+  organizationId String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+
+model FinancialTransaction {
+  id              String       @id @default(cuid())
+  referenceNumber String
+  type            String
+  amount          Float        @default(0)
+  date            DateTime     @default(now())
+  status          String       @default("Pending")
+  partnerId       String
+  organizationId  String
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  partner         Partner      @relation(fields: [partnerId], references: [id])
+}
+
+model Branch {
+  id             String       @id @default(cuid())
+  name           String
+  type           String       @default("Branch")
+  headId         String?
+  organizationId String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  head           Employee?    @relation("BranchHead", fields: [headId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  departments    Department[]
+  employees      Employee[]
+}
+
+model Department {
+  id             String       @id @default(cuid())
+  name           String
+  headId         String?
+  branchId       String
+  organizationId String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  branch         Branch       @relation(fields: [branchId], references: [id])
+  head           Employee?    @relation("DeptHead", fields: [headId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  employees      Employee[]
+}
+
+model BiometricLog {
+  id        String   @id @default(cuid())
+  deviceSn  String
+  empCode   String
+  punchTime DateTime
+  punchType String?
+  rawLog    String
+  processed Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Reimbursement {
+  id             String       @id @default(cuid())
+  amount         Float
+  date           DateTime     @default(now())
+  reason         String
+  attachmentUrl  String?
+  status         String       @default("Pending")
+  employeeId     String
+  organizationId String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  employee       Employee     @relation(fields: [employeeId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+
+model Resignation {
+  id                     String       @id @default(cuid())
+  submissionDate         DateTime     @default(now())
+  proposedLastWorkingDay DateTime
+  noticePeriod           Int          @default(30)
+  reason                 String
+  handoverPlan           String?
+  companyAssetsHandover  Boolean      @default(false)
+  fnfStatus              String       @default("Pending")
+  status                 String       @default("Pending")
+  employeeId             String       @unique
+  organizationId         String
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+  employee               Employee     @relation(fields: [employeeId], references: [id])
+  organization           Organization @relation(fields: [organizationId], references: [id])
+}

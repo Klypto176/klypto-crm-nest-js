@@ -902,12 +902,13 @@ const common_1 = __webpack_require__(/*! @nestjs/common */ "@nestjs/common");
 const attendance_service_1 = __webpack_require__(/*! ./attendance.service */ "./apps/klypto-crm-nest-js/src/attendance/attendance.service.ts");
 const attendance_controller_1 = __webpack_require__(/*! ./attendance.controller */ "./apps/klypto-crm-nest-js/src/attendance/attendance.controller.ts");
 const prisma_module_1 = __webpack_require__(/*! ../prisma/prisma.module */ "./apps/klypto-crm-nest-js/src/prisma/prisma.module.ts");
+const realtime_module_1 = __webpack_require__(/*! ../realtime/realtime.module */ "./apps/klypto-crm-nest-js/src/realtime/realtime.module.ts");
 let AttendanceModule = class AttendanceModule {
 };
 exports.AttendanceModule = AttendanceModule;
 exports.AttendanceModule = AttendanceModule = __decorate([
     (0, common_1.Module)({
-        imports: [prisma_module_1.PrismaModule],
+        imports: [prisma_module_1.PrismaModule, realtime_module_1.RealtimeModule],
         controllers: [attendance_controller_1.AttendanceController],
         providers: [attendance_service_1.AttendanceService],
         exports: [attendance_service_1.AttendanceService],
@@ -933,15 +934,18 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-var _a;
+var _a, _b;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AttendanceService = void 0;
 const common_1 = __webpack_require__(/*! @nestjs/common */ "@nestjs/common");
 const prisma_service_1 = __webpack_require__(/*! ../prisma/prisma.service */ "./apps/klypto-crm-nest-js/src/prisma/prisma.service.ts");
+const attendance_gateway_1 = __webpack_require__(/*! ../realtime/attendance.gateway */ "./apps/klypto-crm-nest-js/src/realtime/attendance.gateway.ts");
 let AttendanceService = class AttendanceService {
     prisma;
-    constructor(prisma) {
+    attendanceGateway;
+    constructor(prisma, attendanceGateway) {
         this.prisma = prisma;
+        this.attendanceGateway = attendanceGateway;
     }
     async getOrganizationId(userId) {
         const user = await this.prisma.user.findUnique({
@@ -1022,7 +1026,7 @@ let AttendanceService = class AttendanceService {
         }
         const canonicalDate = new Date(date);
         canonicalDate.setUTCHours(12, 0, 0, 0);
-        return this.prisma.attendanceRecord.create({
+        const record = await this.prisma.attendanceRecord.create({
             data: {
                 organizationId,
                 employeeId: dto.employeeId,
@@ -1033,6 +1037,8 @@ let AttendanceService = class AttendanceService {
             },
             include: { employee: true },
         });
+        this.attendanceGateway.emitAttendanceUpdated(organizationId, record);
+        return record;
     }
     async update(organizationId, id, dto) {
         const existingRecord = await this.findOne(organizationId, id);
@@ -1051,17 +1057,19 @@ let AttendanceService = class AttendanceService {
                 updateData.checkOut = newCheckOut;
             }
         }
-        return this.prisma.attendanceRecord.update({
+        const record = await this.prisma.attendanceRecord.update({
             where: { id },
             data: updateData,
             include: { employee: true },
         });
+        this.attendanceGateway.emitAttendanceUpdated(organizationId, record);
+        return record;
     }
 };
 exports.AttendanceService = AttendanceService;
 exports.AttendanceService = AttendanceService = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [typeof (_a = typeof prisma_service_1.PrismaService !== "undefined" && prisma_service_1.PrismaService) === "function" ? _a : Object])
+    __metadata("design:paramtypes", [typeof (_a = typeof prisma_service_1.PrismaService !== "undefined" && prisma_service_1.PrismaService) === "function" ? _a : Object, typeof (_b = typeof attendance_gateway_1.AttendanceGateway !== "undefined" && attendance_gateway_1.AttendanceGateway) === "function" ? _b : Object])
 ], AttendanceService);
 
 
@@ -2684,11 +2692,14 @@ let BiometricService = BiometricService_1 = class BiometricService {
             if (timestampStr && timestampStr < '2026-04-23') {
                 continue;
             }
-            this.logger.log(`Parsed line: userId=${userId}, timestamp=${timestampStr}, status=${status}`);
             try {
                 const punchTime = new Date(timestampStr.replace(' ', 'T') + '+05:30');
-                this.logger.log(`Calculated punch time: ${punchTime.toISOString()}`);
-                this.logger.log(`Saving biometric log...`);
+                const existingLog = await this.prisma.biometricLog.findFirst({
+                    where: { empCode: userId, punchTime },
+                });
+                if (existingLog) {
+                    continue;
+                }
                 await this.prisma.biometricLog.create({
                     data: {
                         deviceSn,
@@ -2698,14 +2709,10 @@ let BiometricService = BiometricService_1 = class BiometricService {
                         rawLog: line,
                     },
                 });
-                this.logger.log(`Biometric log saved. Finding employee...`);
                 const employee = await this.prisma.employee.findUnique({
                     where: { code: userId },
-                    include: { organization: true },
                 });
-                this.logger.log(`Employee lookup returned: ${employee ? employee.id : 'null'}`);
                 if (!employee) {
-                    this.logger.warn(`Employee with code ${userId} not found in CRM.`);
                     continue;
                 }
                 const attendanceDto = {
@@ -2719,12 +2726,14 @@ let BiometricService = BiometricService_1 = class BiometricService {
                 this.logger.log(`Processed attendance for ${employee.name} (${userId}) at ${timestampStr}`);
             }
             catch (error) {
-                this.logger.error(`Error processing line: ${line}`, error.stack);
+                const stack = error instanceof Error ? error.stack : undefined;
+                this.logger.error(`Error processing line: ${line}`, stack);
             }
         }
         return 'OK';
     }
-    async getRequests(deviceSn) {
+    getRequests(deviceSn) {
+        this.logger.log(`Command poll from device ${deviceSn}`);
         return 'OK';
     }
 };
@@ -2733,6 +2742,33 @@ exports.BiometricService = BiometricService = BiometricService_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [typeof (_a = typeof prisma_service_1.PrismaService !== "undefined" && prisma_service_1.PrismaService) === "function" ? _a : Object, typeof (_b = typeof attendance_service_1.AttendanceService !== "undefined" && attendance_service_1.AttendanceService) === "function" ? _b : Object])
 ], BiometricService);
+
+
+/***/ },
+
+/***/ "./apps/klypto-crm-nest-js/src/common/cors-origin.util.ts"
+/*!****************************************************************!*\
+  !*** ./apps/klypto-crm-nest-js/src/common/cors-origin.util.ts ***!
+  \****************************************************************/
+(__unused_webpack_module, exports) {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.isOriginAllowed = isOriginAllowed;
+const LOCAL_DEV_ORIGIN_PATTERN = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}|.*\.trycloudflare\.com)(:\d+)?$/;
+function isOriginAllowed(origin) {
+    if (!origin)
+        return true;
+    const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+    if (corsOrigins.includes('*') || corsOrigins.includes(origin)) {
+        return true;
+    }
+    const isProduction = process.env.NODE_ENV === 'production';
+    return !isProduction && LOCAL_DEV_ORIGIN_PATTERN.test(origin);
+}
 
 
 /***/ },
@@ -3335,7 +3371,10 @@ class CreateResignationDto {
 }
 exports.CreateResignationDto = CreateResignationDto;
 __decorate([
-    (0, swagger_1.ApiProperty)({ example: '2026-05-24T10:00:00Z', description: 'Proposed last working day' }),
+    (0, swagger_1.ApiProperty)({
+        example: '2026-05-24T10:00:00Z',
+        description: 'Proposed last working day',
+    }),
     (0, class_validator_1.IsDateString)(),
     __metadata("design:type", String)
 ], CreateResignationDto.prototype, "proposedLastWorkingDay", void 0);
@@ -3346,18 +3385,27 @@ __decorate([
     __metadata("design:type", Number)
 ], CreateResignationDto.prototype, "noticePeriod", void 0);
 __decorate([
-    (0, swagger_1.ApiProperty)({ example: 'Found a better opportunity', description: 'Reason for resignation' }),
+    (0, swagger_1.ApiProperty)({
+        example: 'Found a better opportunity',
+        description: 'Reason for resignation',
+    }),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], CreateResignationDto.prototype, "reason", void 0);
 __decorate([
-    (0, swagger_1.ApiPropertyOptional)({ example: 'Handed over all projects to John', description: 'Handover plan' }),
+    (0, swagger_1.ApiPropertyOptional)({
+        example: 'Handed over all projects to John',
+        description: 'Handover plan',
+    }),
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.IsOptional)(),
     __metadata("design:type", String)
 ], CreateResignationDto.prototype, "handoverPlan", void 0);
 __decorate([
-    (0, swagger_1.ApiPropertyOptional)({ example: false, description: 'Whether company assets were handed over' }),
+    (0, swagger_1.ApiPropertyOptional)({
+        example: false,
+        description: 'Whether company assets were handed over',
+    }),
     (0, class_validator_1.IsBoolean)(),
     (0, class_validator_1.IsOptional)(),
     __metadata("design:type", Boolean)
@@ -3386,7 +3434,10 @@ __decorate([
     __metadata("design:type", String)
 ], UpdateResignationStatusDto.prototype, "fnfStatus", void 0);
 __decorate([
-    (0, swagger_1.ApiPropertyOptional)({ example: true, description: 'Whether company assets were handed over' }),
+    (0, swagger_1.ApiPropertyOptional)({
+        example: true,
+        description: 'Whether company assets were handed over',
+    }),
     (0, class_validator_1.IsBoolean)(),
     (0, class_validator_1.IsOptional)(),
     __metadata("design:type", Boolean)
@@ -3876,7 +3927,9 @@ let ResignationService = class ResignationService {
         const existing = await this.prisma.resignation.findUnique({
             where: { employeeId: dto.employeeId },
         });
-        if (existing && existing.status !== 'Withdrawn' && existing.status !== 'Rejected') {
+        if (existing &&
+            existing.status !== 'Withdrawn' &&
+            existing.status !== 'Rejected') {
             throw new common_1.ConflictException('A resignation request is already active for this employee.');
         }
         return this.prisma.resignation.upsert({
@@ -3900,7 +3953,11 @@ let ResignationService = class ResignationService {
     async findAll(organizationId) {
         return this.prisma.resignation.findMany({
             where: { organizationId },
-            include: { employee: { select: { name: true, code: true, department: true, role: true } } },
+            include: {
+                employee: {
+                    select: { name: true, code: true, department: true, role: true },
+                },
+            },
             orderBy: { submissionDate: 'desc' },
         });
     }
@@ -3914,13 +3971,15 @@ let ResignationService = class ResignationService {
         return resignation;
     }
     async updateStatus(organizationId, id, dto) {
-        const resignation = await this.findOne(organizationId, id);
+        await this.findOne(organizationId, id);
         const updated = await this.prisma.resignation.update({
             where: { id },
             data: {
                 ...(dto.status && { status: dto.status }),
                 ...(dto.fnfStatus && { fnfStatus: dto.fnfStatus }),
-                ...(dto.companyAssetsHandover !== undefined && { companyAssetsHandover: dto.companyAssetsHandover }),
+                ...(dto.companyAssetsHandover !== undefined && {
+                    companyAssetsHandover: dto.companyAssetsHandover,
+                }),
             },
         });
         return updated;
@@ -4705,18 +4764,27 @@ __decorate([
     __metadata("design:type", Number)
 ], CreateReimbursementDto.prototype, "amount", void 0);
 __decorate([
-    (0, swagger_1.ApiProperty)({ example: 'Travel expenses for client meeting', description: 'Reason for the expense' }),
+    (0, swagger_1.ApiProperty)({
+        example: 'Travel expenses for client meeting',
+        description: 'Reason for the expense',
+    }),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], CreateReimbursementDto.prototype, "reason", void 0);
 __decorate([
-    (0, swagger_1.ApiPropertyOptional)({ example: 'https://example.com/receipt.pdf', description: 'URL to the attached bill/receipt' }),
+    (0, swagger_1.ApiPropertyOptional)({
+        example: 'https://example.com/receipt.pdf',
+        description: 'URL to the attached bill/receipt',
+    }),
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.IsOptional)(),
     __metadata("design:type", String)
 ], CreateReimbursementDto.prototype, "attachmentUrl", void 0);
 __decorate([
-    (0, swagger_1.ApiPropertyOptional)({ example: '2026-04-24T10:00:00Z', description: 'Date of the expense' }),
+    (0, swagger_1.ApiPropertyOptional)({
+        example: '2026-04-24T10:00:00Z',
+        description: 'Date of the expense',
+    }),
     (0, class_validator_1.IsDateString)(),
     (0, class_validator_1.IsOptional)(),
     __metadata("design:type", String)
@@ -4731,7 +4799,10 @@ class UpdateReimbursementStatusDto {
 }
 exports.UpdateReimbursementStatusDto = UpdateReimbursementStatusDto;
 __decorate([
-    (0, swagger_1.ApiProperty)({ enum: ReimbursementStatus, example: ReimbursementStatus.APPROVED }),
+    (0, swagger_1.ApiProperty)({
+        enum: ReimbursementStatus,
+        example: ReimbursementStatus.APPROVED,
+    }),
     (0, class_validator_1.IsEnum)(ReimbursementStatus),
     __metadata("design:type", String)
 ], UpdateReimbursementStatusDto.prototype, "status", void 0);
@@ -5075,8 +5146,8 @@ let FinanceService = class FinanceService {
         const reimbursements = await this.prisma.reimbursement.findMany({
             where: { organizationId },
         });
-        const pending = reimbursements.filter(r => r.status === 'Pending');
-        const reimbursed = reimbursements.filter(r => r.status === 'Reimbursed');
+        const pending = reimbursements.filter((r) => r.status === 'Pending');
+        const reimbursed = reimbursements.filter((r) => r.status === 'Reimbursed');
         return {
             pendingExpenses: pending.reduce((sum, r) => sum + r.amount, 0),
             totalReimbursed: reimbursed.reduce((sum, r) => sum + r.amount, 0),
@@ -6709,6 +6780,7 @@ const common_1 = __webpack_require__(/*! @nestjs/common */ "@nestjs/common");
 const app_module_1 = __webpack_require__(/*! ./app.module */ "./apps/klypto-crm-nest-js/src/app.module.ts");
 const swagger_1 = __webpack_require__(/*! @nestjs/swagger */ "@nestjs/swagger");
 const prisma_exception_filter_1 = __webpack_require__(/*! ./common/filters/prisma-exception.filter */ "./apps/klypto-crm-nest-js/src/common/filters/prisma-exception.filter.ts");
+const cors_origin_util_1 = __webpack_require__(/*! ./common/cors-origin.util */ "./apps/klypto-crm-nest-js/src/common/cors-origin.util.ts");
 const express = __importStar(__webpack_require__(/*! express */ "express"));
 const path_1 = __webpack_require__(/*! path */ "path");
 async function bootstrap() {
@@ -6716,27 +6788,9 @@ async function bootstrap() {
         rawBody: true,
     });
     app.use('/uploads', express.static((0, path_1.join)(process.cwd(), 'uploads')));
-    const isProduction = process.env.NODE_ENV === 'production';
-    const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
-        .split(',')
-        .map((origin) => origin.trim())
-        .filter(Boolean);
-    const localDevOriginPattern = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}|.*\.trycloudflare\.com)(:\d+)?$/;
     app.enableCors({
         origin: (origin, callback) => {
-            if (!origin) {
-                callback(null, true);
-                return;
-            }
-            if (corsOrigins.includes('*') || corsOrigins.includes(origin)) {
-                callback(null, true);
-                return;
-            }
-            if (!isProduction && localDevOriginPattern.test(origin)) {
-                callback(null, true);
-                return;
-            }
-            callback(null, false);
+            callback(null, (0, cors_origin_util_1.isOriginAllowed)(origin));
         },
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -10052,6 +10106,126 @@ exports.RbacService = RbacService = __decorate([
 
 /***/ },
 
+/***/ "./apps/klypto-crm-nest-js/src/realtime/attendance.gateway.ts"
+/*!********************************************************************!*\
+  !*** ./apps/klypto-crm-nest-js/src/realtime/attendance.gateway.ts ***!
+  \********************************************************************/
+(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var AttendanceGateway_1;
+var _a, _b, _c;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AttendanceGateway = void 0;
+const common_1 = __webpack_require__(/*! @nestjs/common */ "@nestjs/common");
+const jwt_1 = __webpack_require__(/*! @nestjs/jwt */ "@nestjs/jwt");
+const websockets_1 = __webpack_require__(/*! @nestjs/websockets */ "@nestjs/websockets");
+const socket_io_1 = __webpack_require__(/*! socket.io */ "socket.io");
+const prisma_service_1 = __webpack_require__(/*! ../prisma/prisma.service */ "./apps/klypto-crm-nest-js/src/prisma/prisma.service.ts");
+const cors_origin_util_1 = __webpack_require__(/*! ../common/cors-origin.util */ "./apps/klypto-crm-nest-js/src/common/cors-origin.util.ts");
+function orgRoom(organizationId) {
+    return `org:${organizationId}`;
+}
+let AttendanceGateway = AttendanceGateway_1 = class AttendanceGateway {
+    jwtService;
+    prisma;
+    logger = new common_1.Logger(AttendanceGateway_1.name);
+    server;
+    constructor(jwtService, prisma) {
+        this.jwtService = jwtService;
+        this.prisma = prisma;
+    }
+    async handleConnection(client) {
+        try {
+            const token = client.handshake.auth?.token ||
+                client.handshake.headers?.authorization
+                    ?.toString()
+                    .replace('Bearer ', '');
+            if (!token) {
+                throw new Error('Missing auth token');
+            }
+            const payload = this.jwtService.verify(token, {
+                secret: process.env.JWT_ACCESS_SECRET || 'access-secret',
+            });
+            const user = await this.prisma.user.findUnique({
+                where: { id: payload?.sub },
+                select: { id: true, isActive: true, organizationId: true },
+            });
+            if (!user || !user.isActive || !user.organizationId) {
+                throw new Error('Invalid or inactive user');
+            }
+            await client.join(orgRoom(user.organizationId));
+        }
+        catch (error) {
+            this.logger.warn(`Rejected socket connection: ${error.message}`);
+            client.disconnect(true);
+        }
+    }
+    emitAttendanceUpdated(organizationId, record) {
+        this.server.to(orgRoom(organizationId)).emit('attendance:updated', record);
+    }
+};
+exports.AttendanceGateway = AttendanceGateway;
+__decorate([
+    (0, websockets_1.WebSocketServer)(),
+    __metadata("design:type", typeof (_c = typeof socket_io_1.Server !== "undefined" && socket_io_1.Server) === "function" ? _c : Object)
+], AttendanceGateway.prototype, "server", void 0);
+exports.AttendanceGateway = AttendanceGateway = AttendanceGateway_1 = __decorate([
+    (0, websockets_1.WebSocketGateway)({
+        namespace: '/ws/attendance',
+        cors: {
+            origin: (origin, callback) => callback(null, (0, cors_origin_util_1.isOriginAllowed)(origin)),
+            credentials: true,
+        },
+    }),
+    __metadata("design:paramtypes", [typeof (_a = typeof jwt_1.JwtService !== "undefined" && jwt_1.JwtService) === "function" ? _a : Object, typeof (_b = typeof prisma_service_1.PrismaService !== "undefined" && prisma_service_1.PrismaService) === "function" ? _b : Object])
+], AttendanceGateway);
+
+
+/***/ },
+
+/***/ "./apps/klypto-crm-nest-js/src/realtime/realtime.module.ts"
+/*!*****************************************************************!*\
+  !*** ./apps/klypto-crm-nest-js/src/realtime/realtime.module.ts ***!
+  \*****************************************************************/
+(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.RealtimeModule = void 0;
+const common_1 = __webpack_require__(/*! @nestjs/common */ "@nestjs/common");
+const jwt_1 = __webpack_require__(/*! @nestjs/jwt */ "@nestjs/jwt");
+const attendance_gateway_1 = __webpack_require__(/*! ./attendance.gateway */ "./apps/klypto-crm-nest-js/src/realtime/attendance.gateway.ts");
+const prisma_module_1 = __webpack_require__(/*! ../prisma/prisma.module */ "./apps/klypto-crm-nest-js/src/prisma/prisma.module.ts");
+let RealtimeModule = class RealtimeModule {
+};
+exports.RealtimeModule = RealtimeModule;
+exports.RealtimeModule = RealtimeModule = __decorate([
+    (0, common_1.Module)({
+        imports: [prisma_module_1.PrismaModule, jwt_1.JwtModule.register({})],
+        providers: [attendance_gateway_1.AttendanceGateway],
+        exports: [attendance_gateway_1.AttendanceGateway],
+    })
+], RealtimeModule);
+
+
+/***/ },
+
 /***/ "./apps/klypto-crm-nest-js/src/recruitment/dto/recruitment.dto.ts"
 /*!************************************************************************!*\
   !*** ./apps/klypto-crm-nest-js/src/recruitment/dto/recruitment.dto.ts ***!
@@ -10730,6 +10904,16 @@ module.exports = require("@nestjs/swagger");
 
 /***/ },
 
+/***/ "@nestjs/websockets"
+/*!*************************************!*\
+  !*** external "@nestjs/websockets" ***!
+  \*************************************/
+(module) {
+
+module.exports = require("@nestjs/websockets");
+
+/***/ },
+
 /***/ "@prisma/client"
 /*!*********************************!*\
   !*** external "@prisma/client" ***!
@@ -10807,6 +10991,16 @@ module.exports = require("passport-jwt");
 (module) {
 
 module.exports = require("rxjs");
+
+/***/ },
+
+/***/ "socket.io"
+/*!****************************!*\
+  !*** external "socket.io" ***!
+  \****************************/
+(module) {
+
+module.exports = require("socket.io");
 
 /***/ },
 
