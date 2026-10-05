@@ -57,10 +57,10 @@ export class ApprovalsService {
         type: 'FINANCE',
         title: f.type === 'PURCHASE_ORDER' ? 'Purchase Order' : 'Sales Invoice',
         requester: f.partner?.name || 'Unknown',
-        amount: `$${f.amount.toLocaleString()}`,
+        amount: `₹${f.amount.toLocaleString('en-IN')}`,
         date: f.date,
         priority: f.amount > 5000 ? 'High' : 'Medium',
-        description: `Reference: ${f.referenceNumber}. Transaction amount: $${f.amount.toLocaleString()}.`,
+        description: `Reference: ${f.referenceNumber}. Transaction amount: ₹${f.amount.toLocaleString('en-IN')}.`,
         metadata: { reference: f.referenceNumber },
       })),
     ];

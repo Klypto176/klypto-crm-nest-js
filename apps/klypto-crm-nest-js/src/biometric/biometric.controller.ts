@@ -27,7 +27,8 @@ export class BiometricController {
     this.logger.log(
       `HANDSHAKE DETECTED! Query params: ${JSON.stringify(query)}`,
     );
-    return `GET OPTION FROM: ${sn}\r\nStamp=0\r\nOpStamp=0\r\nErrorDelay=300\r\nDelay=60\r\nTransTimes=00:00;23:59\r\nTransInterval=5\r\nTransFlag=1111000000\r\nRealtime=0\r\nEncrypt=0`;
+    // TransInterval (minutes): the device batches punches and uploads them once per hour.
+    return `GET OPTION FROM: ${sn}\r\nStamp=0\r\nOpStamp=0\r\nErrorDelay=300\r\nDelay=60\r\nTransTimes=00:00;23:59\r\nTransInterval=60\r\nTransFlag=1111000000\r\nRealtime=0\r\nEncrypt=0`;
   }
 
   @Post(['cdata', 'cdata.aspx', 'cdata.php', 'cdata.dll'])

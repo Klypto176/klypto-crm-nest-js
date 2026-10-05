@@ -37,7 +37,7 @@ export class CrmOverviewService {
     return {
       totalLeads,
       activeDeals,
-      totalRevenue: `$${(totalValue._sum.value || 0).toLocaleString()}`,
+      totalRevenue: `₹${(totalValue._sum.value || 0).toLocaleString('en-IN')}`,
       conversionRate: `${conversionRate.toFixed(1)}%`,
     };
   }

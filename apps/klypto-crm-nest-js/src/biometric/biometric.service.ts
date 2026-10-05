@@ -29,8 +29,10 @@ export class BiometricService {
 
       const [userId, timestampStr, status] = line.split('\t');
 
-      // SKIP OLD RECORDS: Only process data from April 23rd, 2026 onwards
-      if (timestampStr && timestampStr < '2026-04-23') {
+      // SKIP OLD RECORDS: the device re-sends its full history on every handshake,
+      // so only punches on or after the sync start date (device local time) count.
+      const syncFromDate = process.env.BIOMETRIC_SYNC_FROM || '2026-10-05';
+      if (timestampStr && timestampStr < syncFromDate) {
         continue;
       }
 
