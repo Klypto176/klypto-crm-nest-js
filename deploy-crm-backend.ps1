@@ -29,7 +29,12 @@ tar -czf $TARBALL `
   --exclude=node_modules --exclude=dist --exclude=.git --exclude=uploads `
   --exclude="*.log" --exclude="deploy-crm-backend.ps1" `
   -C $REPO .
-if ($LASTEXITCODE -ne 0) { throw "Packing source failed." }
+# tar exits 1 (not 0) when a file changed while it was being read -- a
+# warning, not corruption; the archive it produced is still complete. Only
+# a missing/empty output or a harder failure (2+) is treated as fatal.
+if ($LASTEXITCODE -ge 2 -or -not (Test-Path $TARBALL) -or (Get-Item $TARBALL).Length -eq 0) {
+    throw "Packing source failed (tar exit $LASTEXITCODE)."
+}
 $sizeMb = [math]::Round((Get-Item $TARBALL).Length / 1MB, 1)
 Write-Host "    package: $sizeMb MB"
 
@@ -86,7 +91,10 @@ pm2 save
 # server reads that literally ("set -e" becomes "set -e\r") and the whole
 # release fails. Strip \r before sending -- same bug the BIM deploy scripts
 # hit twice.
-($remote -replace "`r`n", "`n") | ssh -i $KEY "ubuntu@$EC2_IP" 'bash -s'
+# Strip any bare \r too, not just \r\n pairs -- the frontend deploy script
+# hit a stray orphan \r on its last heredoc line that survived a \r\n-only
+# replace and broke that line.
+($remote -replace "`r`n", "`n" -replace "`r", "") | ssh -i $KEY "ubuntu@$EC2_IP" 'bash -s'
 if ($LASTEXITCODE -ne 0) { throw "Build/release failed on the server. The previous release is kept at ~/klypto-crm-nest-js-previous if a rollback is needed." }
 
 Write-Host ""
